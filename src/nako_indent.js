@@ -24,12 +24,40 @@ function convert(code) {
     return code
 }
 
-// ありえない改行マークを定義
-const SpecialRetMark = '🌟🌟改行🌟🌟s4j#WjcSb😀/FcX3🌟🌟'
+/**
+ * @param src {string}
+ * @returns {string}
+ */
+function createRetMark(src) {
+    // ソースコード中の "0" の連続の最大個数を数える
+    let count = 0
+    let max = 0
+    for (const char of src) {
+        if (char === "0") {
+            count++
+            max = Math.max(max, count)
+        } else {
+            count = 0
+        }
+    }
+    // それよりも多い "0" の連続の後、"1" が続く文字列をRetMarkとする。
+    // max = 2 の場合の例:
+    // - '\n001\n' -> '00010010001' -> '\n001\n'
+    // - '\n100\n' -> '00011000001' -> '\n100\n'
+    // - '\nab0\n' -> '0001ab00001' -> '\nab0\n'
+    return "0".repeat(max + 1) + "1"
+}
 
+/**
+ * @param code {string}
+ * @returns {string}
+ */
 function convertGo(code) {
+    // 改行文字を置換するためのマークを生成
+    const specialRetMark = createRetMark(code)
+    
     const END = 'ここまで‰'
-    const code2 = replaceRetMark(code) // 文字列の中などの改行を置換
+    const code2 = replaceRetMark(code, specialRetMark) // 文字列の中などの改行を置換
     const lines = code2.split('\n')
     const lines2 = []
     const indentStack = []
@@ -84,7 +112,7 @@ function convertGo(code) {
     }
     // 特別マーカーを改行に置換
     const code3 = lines2.join('\n')
-    return code3.split(SpecialRetMark).join('\n')
+    return code3.split(specialRetMark).join('\n')
 }
 
 function makeIndent(count) {
@@ -97,7 +125,7 @@ function makeIndent(count) {
 
 /**
  * インデントの個数を数える
- * @param {String}} line 
+ * @param {String} line 
  */
 function countIndent(line) {
     let cnt = 0
@@ -124,8 +152,12 @@ function countIndent(line) {
     return cnt
 }
 
-
-function replaceRetMark(src) {
+/**
+ * @param src {string}
+ * @param specialRetMark {string}
+ * @returns {string}
+ */
+function replaceRetMark(src, specialRetMark) {
     const prepare = new NakoPrepare()  // `※`, `／/`, `／＊` といったパターン全てに対応するために必要
     const len = src.length
     let result = ''
@@ -146,7 +178,7 @@ function replaceRetMark(src) {
                 eos = ''
             } else {
                 if (c == '\n') {
-                    result += SpecialRetMark
+                    result += specialRetMark
                 } else {
                     result += c
                 }
