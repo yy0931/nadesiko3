@@ -117,4 +117,13 @@ describe('basic', () => {
     cmp('A1=30;B1=20;(A1+B1)を，表示', '50')
     cmp('A=３．１４;Aを，表示', '3.14')
   })
+  it('エラー位置の取得', () => {
+    try {
+      nako.runReset(`「こんにちは」」と表示する`)
+    } catch (e) {
+      // 2つめの '」' の位置
+      assert.strictEqual(e.startOffset, 7)
+      assert.strictEqual(e.endOffset, 8)
+    }
+  })
 })
