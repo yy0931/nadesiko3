@@ -3,6 +3,8 @@
 //
 'use strict'
 
+const { OffsetToLineColumn } = require('./nako_source_mapping')
+
 class NakoGenError extends Error {
   /**
    * @param {string} msg
@@ -27,6 +29,7 @@ let lastLineNo = -1
  * @typedef {import('./nako3').TokenWithSourceMap} TokenWithSourceMap
  * 
  * @typedef {{
+ *   file: string
  *   nadesiko: { start: number | null, end: number | null }
  *   js: { start: number, end: number }
  * }[]} SourceMap
@@ -47,9 +50,16 @@ class JavaScriptCode {
      */
     this.arr = []
     this.node = sourceNode
+    if (typeof sourceNode === 'object' && sourceNode !== null) {
+      this.file = sourceNode.file
+    } else {
+      this.file = null
+    }
   }
 
-  /** @param {(JavaScriptCode | string | number)[]} code */
+  /**
+   * @param {(JavaScriptCode | string | number)[]} code
+   */
   push(...code) {
     this.arr.push(...code)
     return this
@@ -66,36 +76,77 @@ class JavaScriptCode {
       let sourceMap
       const left = result.code.length
 
-      if (typeof item === 'string' || typeof item === 'number') {
+      if (item instanceof JavaScriptCode) {
+        // クラスならビルドしてから結合する。ただしnodeやfileがnullなら自身のもつ値で上書きする。
+        if (!item.node) {
+          item.node = this.node
+        }
+        if (!item.file) {
+          item.file = this.file
+        }
+        const obj = item.build()
+        result.code += obj.code
+        sourceMap = obj.sourceMap
+      } else  {
         // 文字列ならそのまま結合する
         result.code += item
         sourceMap = [{
+          file: this.file,
           js: { start: 0, end: (item + '').length },
           nadesiko: (!this.node) ?
             { start: null, end: null } :
             { start: this.node.startOffset, end: this.node.endOffset },
         }]
-      } else if (item instanceof JavaScriptCode) {
-        // クラスならビルドしてから結合する。ただしnodeがnullなら自身のnodeで上書きする。
-        if (!item.node) {
-          item.node = this.node
-        }
-        const obj = item.build()
-        result.code += obj.code
-        sourceMap = obj.sourceMap
-      } else {
-        throw item
       }
 
       // ソースマップをずらす
       for (const mapItem of sourceMap) {
         result.sourceMap.push({
+          file: mapItem.file,
           js: this.shiftRange(mapItem.js, left),
           nadesiko: mapItem.nadesiko,
         })
       }
     }
     return result
+  }
+
+  /**
+   * [Source Map Revision 3 Proposal](https://sourcemaps.info/spec.html) に従ったソースマップに変換する。
+   * @param {Record<string, string>} inFiles 各なでしこファイルの中身
+   * @param {string | undefined} [outFileName] 生成されるJavaScrptファイルの名前
+   * @returns {{ code: string, sourceMap: string }}
+   */
+  buildAsStandardFormat(inFiles, outFileName) {
+    const { code, sourceMap } = this.build()
+
+    // offset を (line, column) に変換するためのオブジェクトを作る
+    const offsetToLineColumnJS = new OffsetToLineColumn(code)
+    /** @type {Record<string, OffsetToLineColumn>} */
+    const offsetToLineColumnNadesiko = {}
+    for (const name of Object.keys(inFiles)) {
+      offsetToLineColumnNadesiko[name] = new OffsetToLineColumn(inFiles[name])
+    }
+
+    // ソースマップを生成
+    const { SourceMapGenerator } = require('source-map')
+    const map = new SourceMapGenerator({ file: outFileName })
+    for (const item of sourceMap) {
+      if (!item.file) {
+        continue
+      }
+
+      // start
+      if (typeof item.js.start === 'number' && typeof item.nadesiko.start === 'number') {
+        console.log(item.js.start, item.nadesiko.start)
+        map.addMapping({
+          generated: offsetToLineColumnJS.map(item.js.start, true),
+          source: item.file,
+          original: offsetToLineColumnNadesiko[item.file].map(item.nadesiko.start, true),
+        })
+      }
+    }
+    return { code, sourceMap: map.toString() }
   }
 
   copy() {
@@ -127,10 +178,10 @@ class JavaScriptCode {
 
   isEmpty() {
     return this.arr.map((v) => {
-      if (typeof v === "string") {
-        return v
-      } else {
+      if (v instanceof JavaScriptCode) {
         return v.build().code
+      } else {
+        return v + ''
       }
     }).join("").length === 0
   }
