@@ -36,6 +36,7 @@ class NakoParser extends NakoParserBase {
   ySentenceList () {
     const blocks = []
     let line = -1
+    const offset = this.peekOffset()
     while (!this.isEOF()) {
       const n = this.ySentence()
       if (!n) {break}
@@ -47,24 +48,26 @@ class NakoParser extends NakoParserBase {
         line, this.filename)
     }
 
-    return {type: 'block', block: blocks, line}
+    return {type: 'block', block: blocks, line, ...offset }
   }
 
   ySentence () {
+    const offset = this.peekOffset()
     // 最初の語句が決まっている構文
     if (this.check('eol')) {return this.get()}
     if (this.check('embed_code')) {return this.get()}
     if (this.check('もし')) {return this.yIF()}
     if (this.check('エラー監視')) {return this.yTryExcept()}
     if (this.check('逐次実行')) {return this.yPromise()}
-    if (this.accept(['抜ける'])) {return {type: 'break', line: this.y[0].line, josi: ''}}
-    if (this.accept(['続ける'])) {return {type: 'continue', line: this.y[0].line, josi: ''}}
+    if (this.accept(['抜ける'])) {return {type: 'break', line: this.y[0].line, josi: '', ...offset}}
+    if (this.accept(['続ける'])) {return {type: 'continue', line: this.y[0].line, josi: '', ...offset}}
     if (this.accept(['require', 'string', '取込']))
       {return {
         type: 'require',
         value: this.y[1].value,
         line: this.y[0].line,
-        josi: ''
+        josi: '',
+        ...offset,
       }}
 
     // 先読みして初めて確定する構文
@@ -79,7 +82,8 @@ class NakoParser extends NakoParserBase {
           return {
             type: 'block',
             block: [c1, c2],
-            josi: c2.josi
+            josi: c2.josi,
+            ...offset,
           }
         }
       }
@@ -89,6 +93,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yBlock () {
+    const offset = this.peekOffset()
     const blocks = []
     let line = -1
     if (this.check('ここから')) {this.get()}
@@ -98,7 +103,7 @@ class NakoParser extends NakoParserBase {
       blocks.push(this.y[0])
       if (line < 0) {line = this.y[0].line}
     }
-    return {type: 'block', block: blocks, line}
+    return {type: 'block', block: blocks, line, ...offset}
   }
 
   yDefFuncReadArgs () {
@@ -128,6 +133,7 @@ class NakoParser extends NakoParserBase {
     if (!this.check(type)) {
       return null
     }
+    const offset = this.peekOffset()
     const def = this.get() // ●
     let defArgs = []
     if (this.check('('))
@@ -178,11 +184,13 @@ class NakoParser extends NakoParserBase {
       args: defArgs,
       block,
       line: def.line,
-      josi: ''
+      josi: '',
+      ...offset,
     }
   }
 
   yIFCond () { // もしの条件の取得
+    const offset = this.peekOffset()
     let a = this.yGetArg()
     if (!a) {return null}
     // console.log('yIFCond=', a, this.peek())
@@ -198,7 +206,8 @@ class NakoParser extends NakoParserBase {
           left: a,
           right: b,
           line: a.line,
-          josi: ''
+          josi: '',
+          ...offset
         }}
 
       this.index = tmpI
@@ -222,7 +231,8 @@ class NakoParser extends NakoParserBase {
         type: 'not',
         value: a,
         line: a.line,
-        josi: ''
+        josi: '',
+        ...offset
       }}
 
     return a
@@ -230,6 +240,7 @@ class NakoParser extends NakoParserBase {
 
   yIF () {
     if (!this.check('もし')) {return null}
+    const offset = this.peekOffset()
     const mosi = this.get() // skip もし
     let cond = null
     try {
@@ -284,12 +295,14 @@ class NakoParser extends NakoParserBase {
       block: trueBlock,
       false_block: falseBlock,
       josi: '',
-      line: mosi.line
+      line: mosi.line,
+      ...offset
     }
   }
 
   yPromise () {
     if (!this.check('逐次実行')) {return null}
+    const offset = this.peekOffset()
     const tikuji = this.get() // skip 逐次実行
     const blocks = []
     if (!this.check('eol')) {
@@ -329,7 +342,8 @@ class NakoParser extends NakoParserBase {
       type: 'promise',
       blocks: blocks,
       josi: '',
-      line: tikuji.line
+      line: tikuji.line,
+      ...offset
     }
   }
 
@@ -391,6 +405,7 @@ class NakoParser extends NakoParserBase {
     const polish = this.infixToPolish(list)
     const stack = []
     for (const t of polish) {
+      const offset = this.peekOffset()
       if (!opPriority[t.type]) { // 演算子ではない
         stack.push(t)
         continue
@@ -410,7 +425,8 @@ class NakoParser extends NakoParserBase {
         left: a,
         right: b,
         line: a.line,
-        josi: josi
+        josi: josi,
+        ...offset,
       }
       stack.push(op)
     }
@@ -447,11 +463,12 @@ class NakoParser extends NakoParserBase {
 
   yRepeatTime () {
     if (!this.check('回')) {return null}
+    const offset = this.peekOffset()
     const kai = this.get()
     let num = this.popStack([])
     let multiline = false
     let block = null
-    if (num === null) {num = {type: 'word', value: 'それ', josi: '', line: kai.line}}
+    if (num === null) {num = {type: 'word', value: 'それ', josi: '', line: kai.line, ...offset}}
     if (this.check('ここから')) {
       this.get()
       multiline = true
@@ -470,12 +487,14 @@ class NakoParser extends NakoParserBase {
       value: num,
       block: block,
       line: kai.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 
   yWhile () {
     if (!this.check('間')) {return null}
+    const offset = this.peekOffset()
     const aida = this.get()
     const cond = this.popStack([])
     if (cond === null) {
@@ -492,12 +511,14 @@ class NakoParser extends NakoParserBase {
       cond,
       block,
       josi: '',
-      line: aida.line
+      line: aida.line,
+      ...offset
     }
   }
 
   yFor () {
     if (!this.check('繰り返す')) {return null}
+    const offset = this.peekOffset()
     const kurikaesu = this.get()
     const vTo = this.popStack(['まで'])
     const vFrom = this.popStack(['から'])
@@ -529,24 +550,28 @@ class NakoParser extends NakoParserBase {
       word,
       block,
       line: kurikaesu.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 
   yReturn () {
     if (!this.check('戻る')) {return null}
+    const offset = this.peekOffset()
     const modoru = this.get()
     const v = this.popStack(['で', 'を'])
     return {
       type: 'return',
       value: v,
       line: modoru.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 
   yForEach () {
     if (!this.check('反復')) {return null}
+    const offset = this.peekOffset()
     const hanpuku = this.get()
     const target = this.popStack(['を'])
     const name = this.popStack(['で'])
@@ -570,12 +595,14 @@ class NakoParser extends NakoParserBase {
       target,
       block,
       line: hanpuku.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 
   ySwitch () {
     if (!this.check('条件分岐')) {return null}
+    const offset = this.peekOffset()
     const joukenbunki = this.get()
     const eol = this.get()
     const value = this.popStack(['で'])
@@ -646,12 +673,14 @@ class NakoParser extends NakoParserBase {
       value,
       cases,
       line: joukenbunki.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 
   yMumeiFunc () { // 無名関数の定義
     if (!this.check('def_func')) {return null}
+    const offset = this.peekOffset()
     const def = this.get()
     let args = []
     // 関数の引数定義は省略できる
@@ -669,13 +698,16 @@ class NakoParser extends NakoParserBase {
       block,
       meta: def.meta,
       line: def.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 
   yCall () {
     if (this.isEOF()) {return null}
     while (!this.isEOF()) {
+      const offset = this.peekOffset()
+
       // 代入
       if (this.check('代入')) {
         const dainyu = this.get()
@@ -692,14 +724,14 @@ class NakoParser extends NakoParserBase {
               case 0:
                 throw new NakoSyntaxError(`引数がない関数『${word.name}』を代入的呼び出しすることはできません。`, dainyu.line, this.filename)
               case 1:
-                return {type: 'func', name: word.name, args: [value], setter: true, line: dainyu.line, josi: ''}
+                return {type: 'func', name: word.name, args: [value], setter: true, line: dainyu.line, josi: '', ...offset}
               default:
                 throw new NakoSyntaxError(`引数が2つ以上ある関数『${word.name}』を代入的呼び出しすることはできません。`, dainyu.line, this.filename)
             }
           case 'ref_array': // 配列への代入
-            return {type: 'let_array', name: word.name, index: word.index, value: value, line: dainyu.line, josi: ''}
+            return {type: 'let_array', name: word.name, index: word.index, value: value, line: dainyu.line, josi: '', ...offset}
           default:
-            return {type: 'let', name: word, value: value, line: dainyu.line, josi: ''}
+            return {type: 'let', name: word, value: value, line: dainyu.line, josi: '', ...offset}
         }
       }
       // 制御構文
@@ -759,6 +791,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yCallFunc () {
+    const offset = this.peekOffset()
     const t = this.get()
     const f = t.meta
     // (関数)には ... 構文 ... https://github.com/kujirahand/nadesiko3/issues/66
@@ -809,7 +842,7 @@ class NakoParser extends NakoParserBase {
     if (nullCount >= 2 && (0 < valueCount || t.josi === '' || keizokuJosi.indexOf(t.josi) >= 0))
       {throw new NakoSyntaxError(`関数『${t.value}』の引数が不足しています。`, t.line, this.filename)}
 
-    const funcNode = {type: 'func', name: t.value, args: args, josi: t.josi, line: t.line}
+    const funcNode = {type: 'func', name: t.value, args: args, josi: t.josi, line: t.line, ...offset}
     // 言い切りならそこで一度切る
     if (t.josi === '')
       {return funcNode}
@@ -826,6 +859,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yLet () {
+    const offset = this.peekOffset()
     // 関数への代入的呼び出しの場合
     if (this.check2(['func', 'eq'])) {
       const word = this.peek()
@@ -841,7 +875,8 @@ class NakoParser extends NakoParserBase {
                 name: this.y[0].value,
                 args: [this.y[2]],
                 setter: true,
-                line: this.y[0].line
+                line: this.y[0].line,
+                ...offset
               }
             default:
               throw new NakoSyntaxError(`引数が2つ以上ある関数『${this.y[0].value}』を代入的呼び出しすることはできません。`, this.y[0].line, this.filename)
@@ -869,7 +904,8 @@ class NakoParser extends NakoParserBase {
             type: 'let',
             name: this.y[0],
             value: this.y[2],
-            line: this.y[0].line
+            line: this.y[0].line,
+            ...offset
           }
         }
         else {
@@ -895,7 +931,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0],
           index: [this.y[2]],
           value: this.y[4],
-          line: this.y[0].line
+          line: this.y[0].line,
+          ...offset
         }}
 
       // 二次元配列
@@ -905,7 +942,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0],
           index: [this.y[2], this.y[4]],
           value: this.y[6],
-          line: this.y[0].line
+          line: this.y[0].line,
+          ...offset
         }}
 
       // 三次元配列
@@ -915,7 +953,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0],
           index: [this.y[2], this.y[4], this.y[6]],
           value: this.y[8],
-          line: this.y[0].line
+          line: this.y[0].line,
+          ...offset
         }}
 
     }
@@ -927,7 +966,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0],
           index: [this.y[2]],
           value: this.y[5],
-          line: this.y[0].line
+          line: this.y[0].line,
+          ...offset
         }}
 
       // 二次元配列
@@ -937,7 +977,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0],
           index: [this.y[2], this.y[5]],
           value: this.y[8],
-          line: this.y[0].line
+          line: this.y[0].line,
+          ...offset
         }}
 
       // 三次元配列
@@ -947,7 +988,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0],
           index: [this.y[2], this.y[5], this.y[8]],
           value: this.y[11],
-          line: this.y[0].line
+          line: this.y[0].line,
+          ...offset
         }}
 
     }
@@ -971,7 +1013,8 @@ class NakoParser extends NakoParserBase {
         name: word,
         vartype: vtype.type,
         value,
-        line: word.line
+        line: word.line,
+        ...offset
       }
     }
     // ローカル変数定義（その２）
@@ -981,7 +1024,8 @@ class NakoParser extends NakoParserBase {
         name: this.y[1],
         vartype: '変数',
         value: this.y[3],
-        line: this.y[0].line
+        line: this.y[0].line,
+        ...offset
       }
     }
 
@@ -991,7 +1035,8 @@ class NakoParser extends NakoParserBase {
         name: this.y[1],
         vartype: '定数',
         value: this.y[3],
-        line: this.y[0].line
+        line: this.y[0].line,
+        ...offset
       }
     }
 
@@ -1000,6 +1045,7 @@ class NakoParser extends NakoParserBase {
 
   yCalc () {
     if (this.check('eol')) {return null}
+    const offset = this.peekOffset()
     // 値を一つ読む
     const t = this.yGetArg()
     if (!t) {return null}
@@ -1018,7 +1064,8 @@ class NakoParser extends NakoParserBase {
       left: t1,
       right: t2,
       josi: t2.josi,
-      line: t1.line
+      line: t1.line,
+      ...offset
     }
   }
 
@@ -1044,6 +1091,7 @@ class NakoParser extends NakoParserBase {
     // プリミティブな値
     if (this.checkTypes(['number', 'string']))
       {return this.get()}
+    const offset = this.peekOffset()
 
     // 丸括弧
     if (this.check('(')) {return this.yValueKakko()}
@@ -1057,7 +1105,8 @@ class NakoParser extends NakoParserBase {
         left: {type: 'number', value: -1, line: m.line},
         right: v,
         josi: v.josi,
-        line: m.line
+        line: m.line,
+        ...offset
       }
     }
     // NOT
@@ -1068,7 +1117,8 @@ class NakoParser extends NakoParserBase {
         type: 'not',
         value: v,
         josi: v.josi,
-        line: m.line
+        line: m.line,
+        ...offset
       }
     }
     // JSON object
@@ -1085,7 +1135,8 @@ class NakoParser extends NakoParserBase {
         name: f.value,
         args: [],
         line: f.line,
-        josi: f.josi
+        josi: f.josi,
+        ...offset
       }
     }
     // C風関数呼び出し FUNC(...)
@@ -1097,7 +1148,8 @@ class NakoParser extends NakoParserBase {
           name: this.y[0].value,
           args: this.y[2],
           line: this.y[0].line,
-          josi: this.y[3].josi
+          josi: this.y[3].josi,
+          ...offset
         }}
        else
         {throw new NakoSyntaxError('C風関数呼び出しのエラー', f.line, this.filename)}
@@ -1115,6 +1167,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yValueWord () {
+    const offset = this.peekOffset()
     if (this.check('word')) {
       const word = this.get()
       if (this.skipRefArray) {return word}
@@ -1140,7 +1193,8 @@ class NakoParser extends NakoParserBase {
           name: word,
           index: list,
           josi: josi,
-          line: word.line
+          line: word.line,
+          ...offset
         }
       }
       return word
@@ -1187,12 +1241,14 @@ class NakoParser extends NakoParserBase {
   }
 
   yJSONObject () {
+    const offset = this.peekOffset()
     if (this.accept(['{', '}']))
       {return {
         type: 'json_obj',
         value: [],
         josi: this.y[1].josi,
-        line: this.y[0].line
+        line: this.y[0].line,
+        ...offset
       }}
 
     if (this.accept(['{', this.yJSONObjectValue, '}']))
@@ -1200,7 +1256,8 @@ class NakoParser extends NakoParserBase {
         type: 'json_obj',
         value: this.y[1],
         josi: this.y[2].josi,
-        line: this.y[0].line
+        line: this.y[0].line,
+        ...offset
       }}
 
     return null
@@ -1224,12 +1281,14 @@ class NakoParser extends NakoParserBase {
   }
 
   yJSONArray () {
+    const offset = this.peekOffset()
     if (this.accept(['[', ']']))
       {return {
         type: 'json_array',
         value: [],
         josi: this.y[1].josi,
-        line: this.y[0].line
+        line: this.y[0].line,
+        ...offset
       }}
 
     if (this.accept(['[', this.yJSONArrayValue, ']']))
@@ -1237,7 +1296,8 @@ class NakoParser extends NakoParserBase {
         type: 'json_array',
         value: this.y[1],
         josi: this.y[2].josi,
-        line: this.y[0].line
+        line: this.y[0].line,
+        ...offset
       }}
 
     return null
@@ -1245,6 +1305,7 @@ class NakoParser extends NakoParserBase {
 
   yTryExcept () {
     if (!this.check('エラー監視')) {return null}
+    const offset = this.peekOffset()
     const kansi = this.get() // skip エラー監視
     const block = this.yBlock()
     if (!this.check2(['エラー', 'ならば']))
@@ -1262,7 +1323,8 @@ class NakoParser extends NakoParserBase {
       block,
       errBlock,
       line: kansi.line,
-      josi: ''
+      josi: '',
+      ...offset
     }
   }
 }

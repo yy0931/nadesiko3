@@ -203,6 +203,18 @@ class NakoParserBase {
     return this.tokens[this.index + i]
   }
 
+  /**
+   * 現在のカーソル語句のソースコード上の位置を取得する。
+   * @returns {{ startOffset: number | null, endOffset: number | null }}
+   */
+  peekOffset () {
+    const token = this.peek()
+    if (token === null) {
+      return { startOffset: 0, endOffset: 0 }
+    }
+    return { startOffset: token.startOffset, endOffset: token.endOffset }
+  }
+
   /** @param {Ast} node */
   nodeToStr (node) {
     if (!node) {return `(NULL)`}
