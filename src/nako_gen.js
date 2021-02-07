@@ -36,7 +36,7 @@ let lastLineNo = -1
  */
 
 /**
- * JavaScriptのコードを連結し、ソースマップを付けて返す。
+ * JavaScriptのコードを連結し、コンストラクタで渡したnodeへのソースマップを付けて返す。
  * pushした各要素について、文字列なら `node` へのソースマップを付け、すでにソースマップを持つならその位置をずらす。
  */
 class JavaScriptCode {

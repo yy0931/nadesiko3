@@ -1,7 +1,10 @@
 const { JavaScriptCode } = require('../src/nako_gen')
 const assert = require('assert')
+const NakoCompiler = require('../src/nako3')
+const { SourceMapConsumer } = require('source-map')
 
 describe('nako_gen_test', () => {
+    const nako = new NakoCompiler()
     it('JavaScriptCode - 単純な例', () => {
         const out = new JavaScriptCode({ startOffset: 5, endOffset: 8, file: 'test.nako3' }).push('a', 'b', 'c').build()
 
@@ -49,5 +52,54 @@ describe('nako_gen_test', () => {
             { js: { start: 1, end: 3 }, nadesiko: { start: null, end: null }, file: null }, // ,
             { js: { start: 3, end: 4 }, nadesiko: { start: null, end: null }, file: null }, // b
         ])
+    })
+
+    /**
+     * @param {string} code
+     * @param {string} text
+     */
+    const lineColumnOf = (code, text) => {
+        const lines = code.split('\n')
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].indexOf(text) !== -1) {
+                // source-map はlineを1開始で扱う
+                return { line: i + 1, column: lines[i].indexOf(text) }
+            }
+        }
+        throw new Error(`文字列 ${JSON.stringify(text)} が見つかりません。`)
+    }
+
+    it('JavaScriptCode.buildAsStandardFormat - 単純な例', async () => {
+        // コンパイル
+        const input = '1を表示して。「こんにちは」を表示'
+        const out = nako.compile(input, 'input.nako3', false)
+            .buildAsStandardFormat({ 'input.nako3': input }, 'output.js')
+
+        // '「こんにちは」' は7文字目
+        const map = await new SourceMapConsumer(JSON.parse(out.sourceMap))
+        const originalPosition = map.originalPositionFor(lineColumnOf(out.code, 'こんにちは'))
+        assert.strictEqual(originalPosition.line, 1)    // lineは1から始まる
+        assert.strictEqual(originalPosition.column, 7)  // columnは0から始まる
+        map.destroy()
+    })
+
+    it('JavaScriptCode.buildAsStandardFormat - if文', async () => {
+        // コンパイル
+        const input =
+            'もしはいならば\n' +
+            '    「1」を表示\n' +
+            '違えば\n' +
+            '    「こんにちは」を表示\n' +
+            'ここまで\n'
+
+        const out = nako.compile(input, 'input.nako3', false)
+            .buildAsStandardFormat({ 'input.nako3': input }, 'output.js')
+
+        // '「こんにちは」' は4行目4文字目
+        const map = await new SourceMapConsumer(JSON.parse(out.sourceMap))
+        const originalPosition = map.originalPositionFor(lineColumnOf(out.code, 'こんにちは'))
+        assert.strictEqual(originalPosition.line, 4)
+        assert.strictEqual(originalPosition.column, 4)
+        map.destroy()
     })
 })
