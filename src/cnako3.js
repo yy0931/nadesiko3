@@ -150,7 +150,7 @@ class CNako3 extends NakoCompiler {
    */
   nakoCompile(opt, src, isTest) {
     // system
-    const js = this.compile(src, isTest)
+    const js = this.compile(src, isTest).build().code
     const jscode =
       NakoCompiler.getHeader() +
       this.getVarsCode() +

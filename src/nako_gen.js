@@ -4,6 +4,10 @@
 'use strict'
 
 class NakoGenError extends Error {
+  /**
+   * @param {string} msg
+   * @param {number} line
+   */
   constructor (msg, line) {
     if (line)
       {msg = '[文法エラー](' + line + ') ' + msg}
@@ -18,24 +22,153 @@ let speedMode = false
 let lastLineNo = -1
 
 /**
+ * @typedef {import('./nako_parser_base').Ast} Ast
+ * 
+ * @typedef {import('./nako3').TokenWithSourceMap} TokenWithSourceMap
+ * 
+ * @typedef {{
+ *   nadesiko: { start: number | null, end: number | null }
+ *   js: { start: number, end: number }
+ * }[]} SourceMap
+ */
+
+/**
+ * JavaScriptのコードを連結し、ソースマップを付けて返す。
+ * pushした各要素について、文字列なら `node` へのソースマップを付け、すでにソースマップを持つならその位置をずらす。
+ */
+class JavaScriptCode {
+  /**
+   * @param {Ast | null} sourceNode 追加するコードに対応するASTのノード。無い場合はnullを指定する。
+   */
+  constructor(sourceNode) {
+    /**
+     * @type {(JavaScriptCode | string | number)[]}
+     * @private
+     */
+    this.arr = []
+    this.node = sourceNode
+  }
+
+  /** @param {(JavaScriptCode | string | number)[]} code */
+  push(...code) {
+    this.arr.push(...code)
+    return this
+  }
+
+  /**
+   * @returns {{ code: string, sourceMap: SourceMap }}
+   */
+  build() {
+    /** @type {{ code: string, sourceMap: SourceMap }} */
+    const result = { code: '', sourceMap: [] }
+    for (const item of this.arr) {
+      /** @type {SourceMap} */
+      let sourceMap
+      const left = result.code.length
+
+      if (typeof item === 'string' || typeof item === 'number') {
+        // 文字列ならそのまま結合する
+        result.code += item
+        sourceMap = [{
+          js: { start: 0, end: (item + '').length },
+          nadesiko: (!this.node) ?
+            { start: null, end: null } :
+            { start: this.node.startOffset, end: this.node.endOffset },
+        }]
+      } else if (item instanceof JavaScriptCode) {
+        // クラスならビルドしてから結合する。ただしnodeがnullなら自身のnodeで上書きする。
+        if (!item.node) {
+          item.node = this.node
+        }
+        const obj = item.build()
+        result.code += obj.code
+        sourceMap = obj.sourceMap
+      } else {
+        throw item
+      }
+
+      // ソースマップをずらす
+      for (const mapItem of sourceMap) {
+        result.sourceMap.push({
+          js: this.shiftRange(mapItem.js, left),
+          nadesiko: mapItem.nadesiko,
+        })
+      }
+    }
+    return result
+  }
+
+  copy() {
+    const js = new JavaScriptCode(this.node)
+    js.arr = [...this.arr]
+    return js
+  }
+
+  /**
+   * 各要素を区切り文字列で結合する。
+   * @param {string} separator
+   *
+   * 例: 次の2つは等しい。
+   * ```
+   * new JavaScriptCode(null).push('1', '2', '3').join(',')
+   * new JavaScriptCode(null).push('1', ', ', '2', ',', '3')
+   * ```
+   */
+  join(separator) {
+    const js = new JavaScriptCode(this.node)
+    for (let i = 0; i < this.arr.length; i++) {
+      js.push(this.arr[i])
+      if (i !== this.arr.length - 1) {
+        js.push(separator)
+      }
+    }
+    return js
+  }
+
+  isEmpty() {
+    return this.arr.map((v) => {
+      if (typeof v === "string") {
+        return v
+      } else {
+        return v.build().code
+      }
+    }).join("").length === 0
+  }
+  
+  /**
+   * { start: number | null, end: number | null } の位置をずらす。
+   * @param {{ start: number | null, end: number | null }} range
+   * @param {number} n
+   * @returns {{ start: number | null, end: number | null }}
+   * @private
+   */
+  shiftRange(range, n) {
+    return {
+      start: typeof range.start === "number" ? range.start + n : null,
+      end: typeof range.end === "number" ? range.end + n : null,
+    }
+  }
+}
+
+/**
  * 構文木からJSのコードを生成するクラス
  */
 class NakoGen {
   /**
-   * @ param com {NakoCompiler} コンパイラのインスタンス
+   * @param com {import('./nako3')} コンパイラのインスタンス
    */
   constructor (com) {
     this.header = NakoGen.getHeader()
 
     /**
      * プラグインで定義された関数の一覧
-     * @type {{}}
+     * @type {Record<string, { type: string }>}
      */
     this.funclist = com.funclist
 
     /**
      * なでしこで定義した関数の一覧
-     * @type {{}}
+     * @type {Record<string, { type: string, josi: string[][], fn: JavaScriptCode }>}
      */
     this.nako_func = {}
 
@@ -49,7 +182,7 @@ class NakoGen {
      * JS関数でなでしこ内で利用された関数
      * 利用した関数を個別にJSで定義する
      * (全関数をインクルードしなくても良いように)
-     * @type {{}}
+     * @type {Record<string, boolean>}
      */
     this.used_func = {}
 
@@ -106,43 +239,57 @@ class NakoGen {
     if (this.__options.speed) { speedMode = true }
   }
 
+  /** @returns {JavaScriptCode} */
   static getHeader () {
-    return '' +
-      'var __varslist = this.__varslist = [{}, {}, {}];\n' +
-      'var __vars = this.__varslist[2];\n' +
-      'var __self = this;\n' +
-      'var __module = {};\n'
+    return new JavaScriptCode(null).push('',
+      'var __varslist = this.__varslist = [{}, {}, {}];\n',
+      'var __vars = this.__varslist[2];\n',
+      'var __self = this;\n',
+      'var __module = {};\n')
   }
 
+  /** @returns {JavaScriptCode} */
   static convLineno (node, forceUpdate) {
-    if (node.line === undefined) {return ''}
-    if (speedMode) return `/* line=${node.line} */`
+    const js = new JavaScriptCode(null)
+    if (node.line === undefined) {return js.push('')}
+    if (speedMode) return js.push(`/* line=`, node.line, ` */`)
     // 強制的に行番号をアップデートするか
     if (!forceUpdate) {
-      if (node.line == lastLineNo) return ''
+      if (node.line == lastLineNo) return js.push('')
       lastLineNo = node.line
     }
-    return `__v0.line=${node.line};`
+    return js.push(`__v0.line=`, node.line, `;`)
   }
 
-  static varname (name) {
-    return `__vars["${name}"]`
+  /**
+   * @param {string} name
+   * @param {Ast | undefined} [node]
+   * @returns {JavaScriptCode}
+   */
+  static varname (name, node) {
+    return new JavaScriptCode(node).push(`__vars["`, name,`"]`)
   }
 
+  /**
+   * @param {string} name
+   * @returns {string}
+   */
   static getFuncName (name) {
     let name2 = name.replace(/[ぁ-ん]+$/, '')
     if (name2 === '') {name2 = name}
     return name2
   }
 
-  static convPrint (node) {
-    return `__print(${node});`
-  }
-
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   static convRequire (node) {
-    const moduleName = node.value
-    return NakoGen.convLineno(node, false) +
-      `__module['${moduleName}'] = require('${moduleName}');\n`
+    const moduleName = node.value + ''
+    return new JavaScriptCode(node).push(
+      NakoGen.convLineno(node, false),
+      `__module['`, moduleName, `'] = require('`, moduleName, `');\n`,
+    )
   }
 
   reset () {
@@ -161,80 +308,79 @@ class NakoGen {
 
   /**
    * プログラムの実行に必要な関数を書き出す(システム領域)
-   * @returns {string}
+   * @returns {JavaScriptCode}
    */
   getVarsCode () {
-    let code = ''
+    const js = new JavaScriptCode(null)
 
     // プログラム中で使った関数を列挙して書き出す
     for (const key in this.used_func) {
       const f = this.__varslist[0][key]
-      const name = `this.__varslist[0]["${key}"]`
       if (typeof (f) === 'function')
-        {code += name + '=' + f.toString() + ';\n'}
+        {js.push(`this.__varslist[0]["`, key, `"]`, '=', f.toString(), ';\n')}
        else
-        {code += name + '=' + JSON.stringify(f) + ';\n'}
+        {js.push(`this.__varslist[0]["`, key, `"]`, '=', JSON.stringify(f), ';\n')}
 
     }
-    return code
+    return js
   }
 
   /**
    * プログラムの実行に必要な関数定義を書き出す(グローバル領域)
-   * @param isTest テストかどうか
-   * @returns {string}
+   * @param {boolean} isTest テストかどうか
+   * @returns {JavaScriptCode}
    */
   getDefFuncCode(isTest) {
-    let code = ''
+    const js = new JavaScriptCode(null)
     // よく使う変数のショートカット
-    code += 'const __self = this.__self = this;\n'
-    code += 'const __varslist = this.__varslist;\n'
-    code += 'const __module = this.__module;\n'
-    code += 'const __v0 = this.__v0 = this.__varslist[0];\n'
-    code += 'const __v1 = this.__v1 = this.__varslist[1];\n'
-    code += 'let __vars = this.__vars = this.__varslist[this.__varslist.length - 1];\n'
+    js.push('const __self = this.__self = this;\n')
+    js.push('const __varslist = this.__varslist;\n')
+    js.push('const __module = this.__module;\n')
+    js.push('const __v0 = this.__v0 = this.__varslist[0];\n')
+    js.push('const __v1 = this.__v1 = this.__varslist[1];\n')
+    js.push('let __vars = this.__vars = this.__varslist[this.__varslist.length - 1];\n')
     // なでしこの関数定義を行う
-    let nakoFuncCode = ''
+    const nakoFuncCode = new JavaScriptCode(null)
     for (const key in this.nako_func) {
       const f = this.nako_func[key].fn
-      nakoFuncCode += '' +
-        `//[DEF_FUNC name='${key}']\n` +
-        `__v1["${key}"]=${f};\n;` +
-        `//[/DEF_FUNC name='${key}']\n`
+      nakoFuncCode.push('',
+        `//[DEF_FUNC name='`, key, `']\n`,
+        `__v1["`, key, `"]=`, f, `;\n;`,
+        `//[/DEF_FUNC name='`, key, `']\n`)
     }
-    if (nakoFuncCode !== '')
-      {code += '__v0.line=0;// なでしこの関数定義\n' + nakoFuncCode}
+    if (!nakoFuncCode.isEmpty())
+      {js.push('__v0.line=0;// なでしこの関数定義\n', nakoFuncCode)}
 
     // プラグインの初期化関数を実行する
-    let pluginCode = ''
+    const pluginCode = new JavaScriptCode(null)
     for (const name in this.__module) {
       const initkey = `!${name}:初期化`
       if (this.__varslist[0][initkey])
-        {pluginCode += `__v0["!${name}:初期化"](__self);\n`} // セミコロンがないとエラーになったので注意
+        {pluginCode.push(`__v0["!`, name, `:初期化"](__self);\n`)} // セミコロンがないとエラーになったので注意
 
     }
-    if (pluginCode !== '')
-      {code += '__v0.line=0;// プラグインの初期化\n' + pluginCode}
+    if (!pluginCode.isEmpty())
+      {js.push('__v0.line=0;// プラグインの初期化\n', pluginCode)}
 
     // それを初期化
-    code += '__vars["それ"] = \'\';\n'
+    js.push('__vars["それ"] = \'\';\n')
 
     // テストの定義を行う
     if (isTest) {
-      let testCode = ''
+      const testCode = new JavaScriptCode(null)
 
       for (const key in this.nako_test) {
         const f = this.nako_test[key].fn
-        testCode += `${f};\n;`
+        testCode.push(f, `;\n;`)
       }
 
-      if (testCode !== '') {
-        code += '__v0.line=0;// テスト定義\n'
-        code += testCode + '\n'
+      if (!testCode.isEmpty()) {
+        js.push('__v0.line=0;// テスト定義\n')
+        js.push(testCode, '\n')
       }
     }
 
-    return code
+    return js
   }
 
   getVarsList () {
@@ -289,7 +435,7 @@ class NakoGen {
 
   /**
    * プラグイン関数を参照する
-   * @param key プラグイン関数の関数名
+   * @param {string} key プラグイン関数の関数名
    * @returns プラグイン・オブジェクト
    */
   getFunc (key) {
@@ -311,34 +457,41 @@ class NakoGen {
         this.__varslist[1][name] = function () { } // 事前に適当な値を設定
         this.nako_func[name] = {
           'josi': t.name.meta.josi,
-          'fn': '',
+          'fn': new JavaScriptCode(ast).push(''),
           'type': 'func'
         }
       }
     }
   }
 
+  /**
+   * @param {Ast} node
+   * @param {boolean} isTest
+   * @returns {JavaScriptCode}
+   */
   convGen(node, isTest) {
     const result = this._convGen(node)
     if (isTest) {
-      return ''
+      return new JavaScriptCode(node).push('')
     } else {
       return result
     }
   }
 
+  /**
+   * @param {Ast | Ast[] | null | undefined | string} node
+   * @returns {JavaScriptCode}
+   */
   _convGen(node) {
-    let code = ''
+
     if (node instanceof Array) {
-      for (let i = 0; i < node.length; i++) {
-        const n = node[i]
-        code += this._convGen(n)
-      }
-      return code
+      return new JavaScriptCode(null).push(...node.map((n) => this._convGen(n)))
     }
-    if (node === null) {return 'null'}
-    if (node === undefined) {return 'undefined'}
-    if (typeof (node) !== 'object') {return '' + node}
+    if (node === null) {return new JavaScriptCode(null).push('null')}
+    if (node === undefined) {return new JavaScriptCode(null).push('undefined')}
+    if (typeof (node) !== 'object') {return new JavaScriptCode(null).push(node)}
+
+    const code = new JavaScriptCode(node)
     // switch
     switch (node.type) {
       case 'nop':
@@ -346,109 +499,109 @@ class NakoGen {
       case 'block':
         for (let i = 0; i < node.block.length; i++) {
           const b = node.block[i]
-          code += this._convGen(b)
+          code.push(this._convGen(b))
         }
         break
       case 'comment':
       case 'eol':
-        code += this.convComment(node)
+        code.push(this.convComment(node))
         break
       case 'break':
-        code += this.convCheckLoop(node, 'break')
+        code.push(this.convCheckLoop(node, 'break'))
         break
       case 'continue':
-        code += this.convCheckLoop(node, 'continue')
+        code.push(this.convCheckLoop(node, 'continue'))
         break
       case 'end':
-        code += '__varslist[0][\'終\']();'
+        code.push('__varslist[0][\'終\']();')
         break
       case 'number':
-        code += node.value
+        code.push('' + node.value)
         break
       case 'string':
-        code += this.convString(node)
+        code.push(this.convString(node))
         break
       case 'def_local_var':
-        code += this.convDefLocalVar(node)
+        code.push(this.convDefLocalVar(node))
         break
       case 'let':
-        code += this.convLet(node)
+        code.push(this.convLet(node))
         break
       case 'word':
       case 'variable':
-        code += this.convGetVar(node)
+        code.push(this.convGetVar(node))
         break
       case 'op':
       case 'calc':
-        code += this.convOp(node)
+        code.push(this.convOp(node))
         break
       case 'renbun':
-        code += this.convRenbun(node)
+        code.push(this.convRenbun(node))
         break
       case 'not':
-        code += '((' + this._convGen(node.value) + ')?0:1)'
+        code.push('((', this._convGen(node.value), ')?0:1)')
         break
       case 'func':
       case 'func_pointer':
       case 'calc_func':
-        code += this.convFunc(node)
+        code.push(this.convFunc(node))
         break
       case 'if':
-        code += this.convIf(node)
+        code.push(this.convIf(node))
         break
       case 'promise':
-        code += this.convPromise(node)
+        code.push(this.convPromise(node))
         break
       case 'for':
-        code += this.convFor(node)
+        code.push(this.convFor(node))
         break
       case 'foreach':
-        code += this.convForeach(node)
+        code.push(this.convForeach(node))
         break
       case 'repeat_times':
-        code += this.convRepeatTimes(node)
+        code.push(this.convRepeatTimes(node))
         break
       case 'while':
-        code += this.convWhile(node)
+        code.push(this.convWhile(node))
         break
       case 'switch':
-        code += this.convSwitch(node)
+        code.push(this.convSwitch(node))
         break
       case 'let_array':
-        code += this.convLetArray(node)
+        code.push(this.convLetArray(node))
         break
       case 'ref_array':
-        code += this.convRefArray(node)
+        code.push(this.convRefArray(node))
         break
       case 'json_array':
-        code += this.convJsonArray(node)
+        code.push(this.convJsonArray(node))
         break
       case 'json_obj':
-        code += this.convJsonObj(node)
+        code.push(this.convJsonObj(node))
         break
       case 'func_obj':
-        code += this.convFuncObj(node)
+        code.push(this.convFuncObj(node))
         break
       case 'bool':
-        code += (node.value) ? 'true' : 'false'
+        code.push((node.value) ? 'true' : 'false')
         break
       case 'null':
-        code += 'null'
+        code.push('null')
         break
       case 'def_test':
-        code += this.convDefTest(node)
+        code.push(this.convDefTest(node))
         break
       case 'def_func':
-        code += this.convDefFunc(node)
+        code.push(this.convDefFunc(node))
         break
       case 'return':
-        code += this.convReturn(node)
+        code.push(this.convReturn(node))
         break
       case 'try_except':
-        code += this.convTryExcept(node)
+        code.push(this.convTryExcept(node))
         break
       case 'require':
-        code += NakoGen.convRequire(node)
+        code.push(NakoGen.convRequire(node))
         break
       default:
         throw new Error('System Error: unknown_type=' + node.type)
@@ -456,6 +609,7 @@ class NakoGen {
     return code
   }
 
+  /** @param {string} name */
   findVar (name) {
     // __vars ? (ローカル変数)
     if (this.__vars[name] !== undefined)
@@ -472,6 +626,11 @@ class NakoGen {
     return null
   }
 
+  /**
+   * @param {string} name
+   * @param {number} line
+   * @returns {string}
+   */
   genVar (name, line) {
     const res = this.findVar(name)
     const lno = line
@@ -499,22 +658,35 @@ class NakoGen {
 
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convGetVar (node) {
     const name = node.value
-    return this.genVar(name, node.line)
+    return new JavaScriptCode(node).push(this.genVar(name, node.line))
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convComment (node) {
+    const js = new JavaScriptCode(node)
     let commentSrc = String(node.value)
     commentSrc = commentSrc.replace(/\n/g, '¶')
     const lineNo = NakoGen.convLineno(node, false)
-    if (commentSrc === '' && lineNo === '') { return ';' }
+    if (commentSrc === '' && lineNo.code === '') { return js.push(';') }
     if (commentSrc === '') {
-      return ';' + lineNo + '\n'
+      return js.push(';', lineNo, '\n')
     }
-    return ';' + lineNo + '//' + commentSrc + '\n'
+    return js.push(';', lineNo, '//', commentSrc, '\n')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convReturn (node) {
     // 関数の中であれば利用可能
     if (typeof (this.__vars['!関数']) === 'undefined')
@@ -524,38 +696,47 @@ class NakoGen {
     let value
     if (node.value) {
       value = this._convGen(node.value)
-      return lno + `return ${value};`
+      return new JavaScriptCode(node).push(lno, `return `, value, `;`)
     } else {
       value = this.sore
-      return lno + `return ${value};`
+      return new JavaScriptCode(node).push(lno, `return `, value, `;`)
     }
   }
 
+  /**
+   * @param {Ast} node
+   * @param {'break' | 'continue'} cmd
+   * @returns {JavaScriptCode}
+   */
   convCheckLoop (node, cmd) {
     // ループの中であれば利用可能
     if (!this.flagLoop) {
       const cmdj = (cmd === 'continue') ? '続ける' : '抜ける'
       throw new NakoGenError(`『${cmdj}』文がありますが、それは繰り返しの中で利用してください。`, node.line)
     }
-    return NakoGen.convLineno(node.line) + cmd + ';'
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node.line), cmd, ';')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convDefFuncCommon (node, name) {
-    let code = '(function(){\n'
-    code += '' +
-      'try {\n' +
-      '  __vars = {\'それ\':\'\'};\n' +
-      '  __varslist.push(__vars);\n'
+    const code = new JavaScriptCode(node).push('(function(){\n')
+    code.push('',
+      'try {\n',
+      '  __vars = {\'それ\':\'\'};\n',
+      '  __varslist.push(__vars);\n')
     this.__vars = {'それ': true, '!関数': name}
     // ローカル変数をPUSHする
     this.__varslist.push(this.__vars)
     // JSの引数と引数をバインド
-    code += `  __vars['引数'] = arguments;\n`
+    code.push(`  __vars['引数'] = arguments;\n`)
     // 引数をローカル変数に設定
     let meta = (!name) ? node.meta : node.name.meta
     for (let i = 0; i < meta.varnames.length; i++) {
       const word = meta.varnames[i]
-      code += `  __vars['${word}'] = arguments[${i}];\n`
+      code.push(`  __vars['`, word, `'] = arguments[`, i + '', `];\n`)
       this.__vars[word] = true
     }
     // 関数定義は、グローバル領域で。
@@ -565,113 +746,154 @@ class NakoGen {
       } // 再帰のために事前に適当な値を設定
       this.nako_func[name] = {
         'josi': node.name.meta.josi,
-        'fn': '',
+        'fn': new JavaScriptCode(node).push(''),
         'type': 'func'
       }
     }
     // ブロックを解析
     const block = this._convGen(node.block)
-    code += block + '\n'
+    code.push(block, '\n')
     // 関数の最後に、変数「それ」をreturnするようにする
-    code += `  return (${this.sore});\n`
+    code.push(`  return (`, this.sore, `);\n`)
     // 関数の末尾に、ローカル変数をPOP
     const popcode =
       '__varslist.pop(); ' +
       '__vars = __varslist[__varslist.length-1];'
-    code += '' +
-      `  } finally {\n` +
-      `    ${popcode}\n` +
-      `  }\n` +
-      `})`
+    code.push('',
+      `  } finally {\n`,
+      `    `, popcode, `\n`,
+      `  }\n`,
+      `})`)
     if (name)
-      {this.nako_func[name]['fn'] = code}
+      {this.nako_func[name]['fn'] = code.copy()}
 
     this.__varslist.pop()
     this.__vars = this.__varslist[this.__varslist.length-1]
     if (name)
-      {this.__varslist[1][name] = code}
+      {this.__varslist[1][name] = code.copy()}
 
     return code
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convDefTest(node) {
     const name = node.name.value
-    let code = `describe('test', () => {\n` +
-      ` it('${name}', () => {\n`
-
+    const code = new JavaScriptCode(node).push(
+      `describe('test', () => {\n`,
+      ` it('`, name, `', () => {\n`
+    )
     // ブロックを解析
     const block = this._convGen(node.block)
 
-    code += `   ${block}\n` +
-      ` })\n` +
-      `})`
+    code.push(
+      `   `, block, `\n`,
+      ` })\n`,
+      `})`,
+    )
 
     this.nako_test[name] = {
       'josi': node.name.meta.josi,
-      'fn': code,
+      'fn': code.copy(),
       'type': 'test_func'
     }
 
     // ★この時点ではテストコードを生成しない★
     // プログラム冒頭でコード生成時にテストの定義を行う
-    return ''
+    return code
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convDefFunc(node) {
     const name = NakoGen.getFuncName(node.name.value)
     this.convDefFuncCommon(node, name)
     // ★この時点では関数のコードを生成しない★
     // プログラム冒頭でコード生成時に関数定義を行う
     // return `__vars["${name}"] = ${code};\n`;
-    return ''
+    return new JavaScriptCode(node).push('')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convFuncObj (node) {
     return this.convDefFuncCommon(node, '')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convJsonObj (node) {
-    const list = node.value
-    const codelist = list.map((e) => {
-      const key = this._convGen(e.key)
-      const val = this._convGen(e.value)
-      return `${key}:${val}`
+    const list = /** @type {{ key: Ast, value: Ast }[]} */(node.value)
+    const code = new JavaScriptCode(node).push('{')
+    list.forEach((e, i) => {
+      code.push(this._convGen(e.key), ':', this._convGen(e.value))
+      if (i !== list.length - 1) {
+        code.push(',')
+      }
     })
-    return '{' + codelist.join(',') + '}'
+    return code.push('}')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convJsonArray (node) {
-    const list = node.value
-    const codelist = list.map((e) => {
-      return this._convGen(e)
+    const list = /** @type {Ast[]} */(node.value)
+    const code = new JavaScriptCode(node).push('[')
+    list.forEach((e, i) => {
+      code.push(this._convGen(e))
+      if (i !== list.length - 1) {
+        code.push(',')
+      }
     })
-    return '[' + codelist.join(',') + ']'
+    return code.push(']')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convRefArray(node) {
     const name = this._convGen(node.name)
     const list = node.index
-    let code = name
+    const code = new JavaScriptCode(node).push(name)
     for (let i = 0; i < list.length; i++) {
       const idx = this._convGen(list[i])
-      code += '[' + idx + ']'
+      code.push('[', idx, ']')
     }
     return code
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convLetArray(node) {
     const name = this._convGen(node.name)
     const list = node.index
-    let code = name
+    const code = new JavaScriptCode(node).push(name)
     for (let i = 0; i < list.length; i++) {
       const idx = this._convGen(list[i])
-      code += '[' + idx + ']'
+      code.push('[', idx, ']')
     }
     const value = this._convGen(node.value)
-    code += ' = ' + value + ';\n'
-    return NakoGen.convLineno(node, false) + code
+    code.push(' = ', value, ';\n')
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convGenLoop (node) {
     const tmpflag = this.flagLoop
     this.flagLoop = true
@@ -682,6 +904,10 @@ class NakoGen {
     }
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convFor (node) {
     // ループ変数について
     let word = '__vars[\'__dummy__\']'
@@ -700,24 +926,29 @@ class NakoGen {
     // ループ条件を変数に入れる用
     const varFrom = `$nako_from${idLoop}`
     const varTo = `$nako_to${idLoop}`
-    const code =
-      `\n//[FOR id=${idLoop}]\n` +
-      `const ${varFrom} = ${kara};\n` +
-      `const ${varTo} = ${made};\n` +
-      `if (${varFrom} <= ${varTo}) { // up\n` +
-      `  for (let ${varI} = ${varFrom}; ${varI} <= ${varTo}; ${varI}++) {\n` +
-      `    ${this.sore} = ${word} = ${varI};\n` +
-      `    ${block}\n` +
-      `  };\n` +
-      `} else { // down\n` +
-      `  for (let ${varI} = ${varFrom}; ${varI} >= ${varTo}; ${varI}--) {\n` +
-      `    ${this.sore} = ${word} = ${varI};` + '\n' +
-      `    ${block}\n` +
-      `  };\n` +
-      `};\n//[/FOR id=${idLoop}]\n`
-    return NakoGen.convLineno(node, false) + code
+    const code = new JavaScriptCode(node).push(
+      `\n//[FOR id=`, idLoop, `]\n`,
+      `const `, varFrom, ` = `, kara, `;\n`,
+      `const `, varTo, ` = `, made, `;\n`,
+      `if (`, varFrom, ` <= `, varTo, `) { // up\n`,
+      `  for (let `, varI, ` = `, varFrom, `; `, varI, ` <= `, varTo, `; `, varI, `++) {\n`,
+      `    `, this.sore, ` = `, word, ` = `, varI, `;\n`,
+      `    `, block, `\n`,
+      `  };\n`,
+      `} else { // down\n`,
+      `  for (let `, varI, ` = `, varFrom, `; `, varI, ` >= `, varTo, `; `, varI, `--) {\n`,
+      `    `, this.sore, ` = `, word, ` = `, varI, `;`, '\n',
+      `    `, block, `\n`,
+      `  };\n`,
+      `};\n//[/FOR id=`, idLoop, `]\n`,
+    )
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convForeach (node) {
     let target
     if (node.target === null)
@@ -733,94 +964,124 @@ class NakoGen {
       nameS = NakoGen.varname(node.name.value)
       this.__vars[node.name] = true
     }
-    const code =
-      `let $nako_foreach_v${id}=${target};\n` +
-      `for (let $nako_i${id} in $nako_foreach_v${id})` + '{\n' +
-      `  if ($nako_foreach_v${id}.hasOwnProperty($nako_i${id})) {\n` +
-      `    ${nameS} = ${this.sore} = $nako_foreach_v${id}[$nako_i${id}];` + '\n' +
-      `    ${key} = $nako_i${id};\n` +
-      `    ${block}\n` +
-      '  }\n' +
+    const code = new JavaScriptCode(node).push(
+      `let $nako_foreach_v`, id, `=`, target, `;\n`,
+      `for (let $nako_i`, id, ` in $nako_foreach_v`, id, `)`, '{\n',
+      `  if ($nako_foreach_v`, id, `.hasOwnProperty($nako_i`, id, `)) {\n`,
+      `    `, nameS, ` = `, this.sore, ` = $nako_foreach_v`, id, `[$nako_i`, id, `];`, '\n',
+      `    `, key, ` = $nako_i`, id, `;\n`,
+      `    `, block, `\n`,
+      '  }\n',
       '};\n'
-    return NakoGen.convLineno(node, false) + code
+    )
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convRepeatTimes (node) {
     const id = this.loop_id++
     const value = this._convGen(node.value)
     const block = this.convGenLoop(node.block)
     const kaisu = '__v0["回数"]'
-    const code =
-      `for(var $nako_i${id} = 1; $nako_i${id} <= ${value}; $nako_i${id}++)` + '{\n' +
-      `  ${this.sore} = ${kaisu} = $nako_i${id};` + '\n' +
-      '  ' + block + '\n}\n'
-    return NakoGen.convLineno(node, false) + code
+    const code = new JavaScriptCode(node).push(
+      `for(var $nako_i`, id, ` = 1; $nako_i`, id, ` <= `, value, `; $nako_i`, id, `++)` + '{\n' +
+      `  `, this.sore, ` = `, kaisu, ` = $nako_i`, id, `;` + '\n' +
+      '  ', block, '\n}\n'
+    )
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convWhile (node) {
     const cond = this._convGen(node.cond)
     const block = this.convGenLoop(node.block)
-    const code =
-      `while (${cond})` + '{\n' +
-      `  ${block}` + '\n' +
+    const code = new JavaScriptCode(node).push(
+      `while (`, cond, `)`, '{\n',
+      `  `, block, '\n',
       '}\n'
-    return NakoGen.convLineno(node, false) + code
+    )
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convSwitch (node) {
     const value = this._convGen(node.value)
     const cases = node.cases
-    let body = ''
+    let body = new JavaScriptCode(node)
     for (let i = 0; i < cases.length; i++) {
       const cvalue = cases[i][0]
       const cblock = this.convGenLoop(cases[i][1])
       if (cvalue.type == '違えば') {
-        body += `  default:\n`
+        body.push(`  default:\n`)
       } else {
         const cvalue_code = this._convGen(cvalue)
-        body += `  case ${cvalue_code}:\n`
+        body.push(`  case `, cvalue_code, `:\n`)
       }
-      body += `    ${cblock}\n` +
-              `    break\n`
+      body.push(`    `, cblock, `\n`,
+                `    break\n`)
     }
-    const code =
-      `switch (${value})` + '{\n' +
-      `${body}` + '\n' +
+    const code = new JavaScriptCode(node).push(
+      `switch (`, value, `)`, '{\n',
+      body, '\n',
       '}\n'
-    return NakoGen.convLineno(node, false) + code
+    )
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convIf (node) {
     const expr = this._convGen(node.expr)
     const block = this._convGen(node.block)
-    const falseBlock = (node.false_block === null)
-      ? ''
-      : 'else {' + this._convGen(node.false_block) + '};\n'
-    return NakoGen.convLineno(node, false) +
-      `if (${expr}) {\n  ${block}\n}` + falseBlock + ';\n'
+    const falseBlock = new JavaScriptCode(node)
+    if (node.false_block !== null) {
+      falseBlock.push('else {', this._convGen(node.false_block), '};\n')
+    }
+    return new JavaScriptCode(node).push(
+      NakoGen.convLineno(node, false),
+      `if (`, expr, `) {\n  `,
+      block,
+      `\n}`, falseBlock, ';\n',
+    )
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convPromise (node) {
     const pid = this.loop_id++
-    let code = `const __pid${pid} = async () => {\n`
+    let code = new JavaScriptCode(node).push(`const __pid`, pid, ` = async () => {\n`)
     for (let i = 0; i < node.blocks.length; i++) {
-      const block = this._convGen(node.blocks[i]).replace(/\s+$/, '') + '\n'
-      const blockCode =
-        'await new Promise((resolve) => {\n' +
-        '  __self.resolve = resolve;\n' +
-        '  __self.resolveCount = 0;\n' +
-        `  ${block}\n` +
-        '  if (__self.resolveCount === 0) resolve();\n' +
-        '\n' +
+      const block = this._convGen(node.blocks[i])
+      code.push(
+        'await new Promise((resolve) => {\n',
+        '  __self.resolve = resolve;\n',
+        '  __self.resolveCount = 0;\n',
+        `  `, block, '\n', `\n`,
+        '  if (__self.resolveCount === 0) resolve();\n',
+        '\n',
         '})\n'
-      code += `${blockCode}`
+      )
     }
-    code += `};/* __pid${pid} */\n`
-    code += `__pid${pid}();\n`
-    code += '__self.resolve = undefined;\n'
-    return NakoGen.convLineno(node, false) + code
+    code.push(`};/* __pid`, pid, ` */\n`)
+    code.push(`__pid`, pid, `();\n`)
+    code.push('__self.resolve = undefined;\n')
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), code)
   }
 
+  /** @returns {[JavaScriptCode[], unknown]} */
   convFuncGetArgsCalcType (funcName, func, node) {
     const args = []
     const opts = {}
@@ -836,6 +1097,7 @@ class NakoGen {
     return [args, opts]
   }
 
+  /** @returns {string[]} */
   getPluginList () {
     const r = []
     for (const name in this.__module) {r.push(name)}
@@ -844,12 +1106,12 @@ class NakoGen {
 
   /**
    * 関数の呼び出し
-   * @param node
-   * @returns string コード
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
    */
   convFunc (node) {
     const funcName = NakoGen.getFuncName(node.name)
-    let funcNameS
+    let funcNameS = new JavaScriptCode(node)
     const res = this.findVar(funcName)
     if (res === null) {
       throw new NakoGenError(`関数『${funcName}』が見当たりません。有効プラグイン=[` + this.getPluginList().join(', ') + ']', node.line)
@@ -857,7 +1119,7 @@ class NakoGen {
     let func
     if (res.i === 0) { // plugin function
       func = this.funclist[funcName]
-      funcNameS = `__v0["${funcName}"]`
+      funcNameS.push(`__v0["`, funcName, `"]`)
       if (func.type !== 'func') {
         throw new NakoGenError(`『${funcName}』は関数ではありません。`, node.line)
       }
@@ -866,7 +1128,7 @@ class NakoGen {
       // 無名関数の可能性
       if (func === undefined) {func = {return_none: false}}
 
-      funcNameS = `__varslist[${res.i}]["${funcName}"]`
+      funcNameS.push(`__varslist[`, res.i, `]["`, funcName, `"]`)
     }
     // 関数の参照渡しか？
     if (node.type === 'func_pointer') {
@@ -875,7 +1137,7 @@ class NakoGen {
     // 関数の参照渡しでない場合
     // 関数定義より助詞を一つずつ調べる
     const argsInfo = this.convFuncGetArgsCalcType(funcName, func, node)
-    const args = argsInfo[0]
+    const args = new JavaScriptCode(node).push(...argsInfo[0])
     const argsOpts = argsInfo[1]
     // function
     if (typeof (this.used_func[funcName]) === 'undefined') {
@@ -896,23 +1158,37 @@ class NakoGen {
 
     // 関数呼び出しコードの構築
     let argsCode = args.join(',')
-    let code = `${funcNameS}(${argsCode})`
+    let code = new JavaScriptCode(node).push(funcNameS, `(`, argsCode, `)`)
     if (func.return_none) {
-      code = `${funcBegin}${code};${funcEnd}\n`
+      code = new JavaScriptCode(node).push(funcBegin, code, `;`, funcEnd, `\n`)
     } else {
-      code = `(function(){ ${funcBegin}const tmp=${this.sore}=${code}; return tmp;${funcEnd}; }).call(this)`
+      code = new JavaScriptCode(node).push(`(function(){ `, funcBegin, `const tmp=`, this.sore, `=`, code, `; return tmp;`, funcEnd, `; }).call(this)`)
       // ...して
-      if (node.josi === 'して'){code += ';\n'}
+      if (node.josi === 'して'){code.push(';\n')}
     }
     return code
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convRenbun(node) {
     let right = this._convGen(node.right)
     let left = this._convGen(node.left)
-    return `(function(){${left}; return ${right}}).call(this)`
+    return new JavaScriptCode(node).push(
+      `(function(){`,
+      left,
+      `; return `,
+      right,
+      `}).call(this)`,
+    )
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convOp (node) {
     const OP_TBL = { // トークン名からJS演算子
       '&': '+""+',
@@ -935,19 +1211,22 @@ class NakoGen {
     let right = this._convGen(node.right)
     let left = this._convGen(node.left)
     if (NUM_OP_TBL[op]) {
-      left = `parseFloat(${left})`
-      right = `parseFloat(${right})`
+      left = new JavaScriptCode(node).push(`parseFloat(`, left, `)`)
+      right = new JavaScriptCode(node).push(`parseFloat(`, right, `)`)
     }
     // 階乗
     if (op === '^')
-      {return '(Math.pow(' + left + ',' + right + '))'}
+      {return new JavaScriptCode(node).push('(Math.pow(', left, ',', right, '))')}
 
     // 一般的なオペレータに変換
     if (OP_TBL[op]) {op = OP_TBL[op]}
-    //
-    return `(${left} ${op} ${right})`
+    return new JavaScriptCode(node).push(`(`, left, op, right, `)`)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convLet (node) {
     // もし値が省略されていたら、変数「それ」に代入する
     let value = this.sore
@@ -956,7 +1235,7 @@ class NakoGen {
     const name = node.name.value
     const res = this.findVar(name)
     let isTop
-    let code = ''
+
     if (res === null) {
       this.__vars[name] = true
       isTop = true
@@ -973,14 +1252,26 @@ class NakoGen {
         }}
 
     }
-    if (isTop)
-      {code = `__vars["${name}"]=${value};`}
-     else
-      {code = `__varslist[${res.i}]["${name}"]=${value};`}
 
-    return ';' + NakoGen.convLineno(node, false) + code + '\n'
+    /** @type {JavaScriptCode} */
+    let code = new JavaScriptCode(node)
+    if (isTop)
+      {code.push(`__vars["`, name, `"]=`, value, `;`)}
+     else
+      {code.push(`__varslist[`, res.i, `]["`, name, `"]=`, value, `;`)}
+
+    return new JavaScriptCode(node).push(
+      ';',
+      NakoGen.convLineno(node, false),
+      code,
+      '\n',
+    )
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convDefLocalVar(node) {
     const value = (node.value === null) ? 'null' : this._convGen(node.value)
     const name = node.name.value
@@ -1000,10 +1291,13 @@ class NakoGen {
       if (!this.__vars.meta[name]) {this.__vars.meta[name] = {}}
       this.__vars.meta[name].readonly = true
     }
-    const code = `__vars["${name}"]=${value};\n`
-    return NakoGen.convLineno(node, false) + code
+    return new JavaScriptCode(node).push(NakoGen.convLineno(node, false), `__vars["`, name, `"]=`, value, `;\n`)
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convString (node) {
     let value = '' + node.value
     let mode = node.mode
@@ -1018,18 +1312,30 @@ class NakoGen {
       value = value.replace(/\{(.+?)\}/g, rf)
       value = value.replace(/｛(.+?)｝/g, rf)
     }
-    return '"' + value + '"'
+    return new JavaScriptCode(node).push('"', value, '"')
   }
 
+  /**
+   * @param {Ast} node
+   * @returns {JavaScriptCode}
+   */
   convTryExcept(node) {
     const block = this._convGen(node.block)
     const errBlock = this._convGen(node.errBlock)
-    return NakoGen.convLineno(node, false) +
-      `try {\n${block}\n} catch (e) {\n` +
-      '__varslist[0]["エラーメッセージ"] = e.message;\n' +
-      ';\n' +
-      `${errBlock}}\n`
+    return new JavaScriptCode(node).push(
+      NakoGen.convLineno(node, false),
+      `try {\n`,
+      block,
+      `\n} catch (e) {\n`,
+      '__varslist[0]["エラーメッセージ"] = e.message;\n',
+      ';\n',
+      errBlock,
+      `}\n`,
+    )
   }
 }
 
-module.exports = NakoGen
+module.exports = {
+  JavaScriptCode,
+  NakoGen,
+}

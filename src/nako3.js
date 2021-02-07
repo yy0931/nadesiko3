@@ -4,7 +4,7 @@
 const Parser = require('./nako_parser3')
 const { LexError, NakoLexer } = require('./nako_lexer')
 const Prepare = require('./nako_prepare')
-const NakoGen = require('./nako_gen')
+const { NakoGen, JavaScriptCode } = require('./nako_gen')
 const NakoRuntimeError = require('./nako_runtime_error')
 const NakoIndent = require('./nako_indent')
 const PluginSystem = require('./plugin_system')
@@ -35,7 +35,11 @@ class LexErrorWithSourceMap extends LexError {
       this.endOffset = endOffset
   }
 }
+
+
 /**
+ * @typedef {import('./nako_parser_base').Ast} Ast
+ *
  * @typedef {{
  *   type: string;
  *   value: unknown;
@@ -74,27 +78,6 @@ class NakoSyntaxErrorWithSourceMap extends NakoSyntaxError {
       this.error = error
   }
 }
-
-/**
- * 一部のプロパティのみ。
- * @typedef {{
- *   type: string
- *   cond?: TokenWithSourceMap | Ast
- *   block?: (TokenWithSourceMap | Ast)[] | TokenWithSourceMap | Ast
- *   false_block?: TokenWithSourceMap | Ast
- *   name?: TokenWithSourceMap | Ast
- *   josi?: string
- *   value?: unknown
- *   line?: number
- *   column?: unknown
- *   file?: unknown
- *   preprocessedCodeOffset?: unknown
- *   preprocessedCodeLength?: unknown
- *   startOffset?: unknown
- *   endOffset?: unknown
- *   rawJosi?: unknown
- * }} Ast
- */
 
 class NakoCompiler {
   constructor () {
@@ -239,8 +222,9 @@ class NakoCompiler {
 
   /**
    * コードを生成
-   * @param ast AST
-   * @param isTest テストかどうか
+   * @param {import('./nako_parser_base').Ast} ast AST
+   * @param {boolean} isTest テストかどうか
+   * @returns {JavaScriptCode}
    */
   generate(ast, isTest) {
     // 先になでしこ自身で定義したユーザー関数をシステムに登録
@@ -249,11 +233,12 @@ class NakoCompiler {
     const js = this.gen.convGen(ast, isTest)
     // JSコードを実行するための事前ヘッダ部分の生成
     const def = this.gen.getDefFuncCode(isTest)
+    const code = new JavaScriptCode(null).push(def, js)
     if (this.debug && this.debugJSCode) {
       console.log('--- generate ---')
-      console.log(def + js)
+      console.log(code.build().code)
     }
-    return def + js
+    return code
   }
 
   /**
@@ -526,15 +511,20 @@ class NakoCompiler {
 
   /**
    * プログラムをコンパイルしてJavaScriptのコードを返す
-   * @param code コード (なでしこ)
-   * @param isTest テストかどうか
-   * @returns コード (JavaScript)
+   * @param {string} code コード (なでしこ)
+   * @param {string} filename
+   * @param {boolean} isTest テストかどうか
+   * @returns {JavaScriptCode} JavaScriptコード
    */
   compile(code, filename, isTest) {
     const ast = this.parse(code, filename)
-    return this.generate(ast, isTest)
+    const js = this.generate(ast, isTest)
+    return js
   }
 
+  /**
+   * @returns {Promise<JavaScriptCode>}
+   */
   async compileAsync (code, filename, isTest) {
     const ast = await this.parseAsync(code, filename)
     return this.generate(ast, isTest)
@@ -552,7 +542,7 @@ class NakoCompiler {
     opts = Object.assign({ resetEnv: true, resetLog: true, testOnly: false }, opts)
     if (opts.resetEnv) {this.reset()}
     if (opts.resetLog) {this.clearLog()}
-    let js = this.compile(code, fname, opts.testOnly)
+    let js = this.compile(code, fname, opts.testOnly).build().code
     try {
       this.__varslist[0].line = -1 // コンパイルエラーを調べるため
       const func = new Function(js) // eslint-disable-line
@@ -582,13 +572,13 @@ class NakoCompiler {
     opts = Object.assign({ resetEnv: true, resetLog: true, testOnly: false }, opts)
     if (opts.resetEnv) {this.reset()}
     if (opts.resetLog) {this.clearLog()}
-    let js = await this.compileAsync(code, fname, opts.testOnly)
+    let js = (await this.compileAsync(code, fname, opts.testOnly)).build()
     try {
       this.__varslist[0].line = -1 // コンパイルエラーを調べるため
-      const func = new Function(js) // eslint-disable-line
+      const func = new Function(js.code) // eslint-disable-line
       func.apply(this)
     } catch (e) {
-      this.js = js
+      this.js = js.code
       if (e instanceof NakoRuntimeError) {
         throw e
       } else {

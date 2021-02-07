@@ -4,6 +4,30 @@
 
 const NakoSyntaxError = require('./nako_syntax_error')
 
+/**
+ * @typedef {{
+ *   type: string
+ *   cond?: Ast
+ *   block?: Ast[] | Ast
+ *   false_block?: Ast
+ *   name?: string | Ast
+ *   josi?: string
+ *   value?: unknown
+ *   line?: number
+ *   column?: number
+ *   file?: string
+ *   preprocessedCodeOffset?: number
+ *   preprocessedCodeLength?: number
+ *   startOffset?: number
+ *   endOffset?: number
+ *   rawJosi?: string
+ *   left?: Ast
+ *   right?: Ast
+ *   operator?: string
+ *   meta?: unknown
+ * }} Ast
+ */
+ 
 class NakoParserBase {
   constructor () {
     this.debugAll = false
@@ -20,12 +44,16 @@ class NakoParserBase {
   }
 
   reset () {
+    /** @type {TokenWithSourceMap[]} */
     this.tokens = [] // 字句解析済みのトークンの一覧を保存
+    /** @type {number} */
     this.index = 0 // tokens[] のどこまで読んだかを管理する
     this.stack = [] // 計算用のスタック ... 直接は操作せず、pushStack() popStack() を介して使う
+    /** @type {Ast[]} */
     this.y = [] // accept()で解析済みのトークンを配列で得るときに使う
   }
 
+  /** @param {string} fname */
   setFilename (fname) {
     this.filename = fname
   }
@@ -36,7 +64,7 @@ class NakoParserBase {
 
   /**
    * 特定の助詞を持つ要素をスタックから一つ下ろす、指定がなければ末尾を下ろす
-   * @param josiList 下ろしたい助詞の配列
+   * @param {string[][]} josiList 下ろしたい助詞の配列
    */
   popStack (josiList) {
     if (!josiList) {return this.stack.pop()}
@@ -84,6 +112,7 @@ class NakoParserBase {
 
   /**
    * カーソル位置にある単語の型を確かめる
+   * @param {string} ttype
    */
   check (ttype) {
     return (this.tokens[this.index].type === ttype)
@@ -91,7 +120,7 @@ class NakoParserBase {
 
   /**
    * カーソル位置以降にある単語の型を確かめる 2単語以上に対応
-   * @param a [単語1の型, 単語2の型, ... ]
+   * @param {(string | string[])[]} a [単語1の型, 単語2の型, ... ]
    */
   check2 (a) {
     for (let i = 0; i < a.length; i++) {
@@ -110,6 +139,7 @@ class NakoParserBase {
 
   /**
    * カーソル位置の型を確認するが、複数の種類を確かめられる
+   * @param {string[]} a
    */
   checkTypes (a) {
     const type = this.tokens[this.index].type
@@ -119,8 +149,10 @@ class NakoParserBase {
   /**
    * check2の高度なやつ、型名の他にコールバック関数を指定できる
    * 型にマッチしなければ null を返し、カーソルを巻き戻す
+   * @param {(string | string[] | ((y: Ast[]) => Ast | null))[]} types
    */
   accept (types) {
+    /** @type {Ast[]} */
     const y = []
     const tmpIndex = this.index
     const rollback = () => {
@@ -171,6 +203,7 @@ class NakoParserBase {
     return this.tokens[this.index + i]
   }
 
+  /** @param {Ast} node */
   nodeToStr (node) {
     if (!node) {return `(NULL)`}
     let name = node.name

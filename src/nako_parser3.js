@@ -6,10 +6,14 @@ const {NakoParserBase, NakoSyntaxError} = require('./nako_parser_base')
 const operatorList = []
 for (const key in opPriority) {operatorList.push(key)}
 
+/**
+ * @typedef {import('./nako3').TokenWithSourceMap} TokenWithSourceMap
+ * @typedef {import('./nako_parser_base').Ast} Ast
+ */
 class NakoParser extends NakoParserBase {
   /**
-   * @param tokens 字句解析済みのトークンの配列
-   * @return {{type, block, line}} AST(構文木)
+   * @param {TokenWithSourceMap[]} tokens 字句解析済みのトークンの配列
+   * @return {{type: string, block: Ast[], line: number}} AST(構文木)
    */
   parse (tokens) {
     this.reset()

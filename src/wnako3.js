@@ -1,6 +1,7 @@
 // nadesiko for web browser
 // wnako3.js
 const NakoCompiler = require('./nako3')
+const { JavaScriptCode } = require('./nako_gen')
 const NakoRequire = require('./nako_require_helper')
 const PluginBrowser = require('./plugin_browser')
 const NAKO_SCRIPT_RE = /^(なでしこ|nako|nadesiko)3?$/
@@ -51,25 +52,27 @@ class WebNakoCompiler extends NakoCompiler {
    * コードを生成 (override)
    * @param ast AST
    * @param isTest テストかどうか
-   * @returns {string} コード
+   * @returns {JavaScriptCode} コード
    */
   generate(ast, isTest) {
     let code = super.generate(ast, isTest)
 
-    if (isTest && code !== '') {
-      code = '// mocha初期化\n' +
-        'const stats = document.getElementById(\'mocha-stats\');\n' +
-        'if(stats !== null) {\n' +
-        ' document.getElementById(\'mocha\').removeChild(stats);\n' +
-        '}\n' +
-        'mocha.suite.suites = [];\n' +
-        'mocha.setup("bdd");\n' +
-        'mocha.growl();\n'+
-        'mocha.checkLeaks();\n' +
-        'mocha.cleanReferencesAfterRun(false);\n' +
-        '\n' +
-        code + '\n' +
+    if (isTest && !code.isEmpty()) {
+      code = new JavaScriptCode(null).push(
+        '// mocha初期化\n',
+        'const stats = document.getElementById(\'mocha-stats\');\n',
+        'if(stats !== null) {\n',
+        ' document.getElementById(\'mocha\').removeChild(stats);\n',
+        '}\n',
+        'mocha.suite.suites = [];\n',
+        'mocha.setup("bdd");\n',
+        'mocha.growl();\n',
+        'mocha.checkLeaks();\n',
+        'mocha.cleanReferencesAfterRun(false);\n',
+        '\n',
+        code, '\n',
         'mocha.run();// テスト実行\n'
+      )
     }
 
     return code
