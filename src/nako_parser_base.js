@@ -205,14 +205,14 @@ class NakoParserBase {
 
   /**
    * 現在のカーソル語句のソースコード上の位置を取得する。
-   * @returns {{ startOffset: number | null, endOffset: number | null }}
+   * @returns {{ startOffset: number | null, endOffset: number | null, file: string | undefined }}
    */
-  peekOffset () {
+  peekSourceMap () {
     const token = this.peek()
     if (token === null) {
-      return { startOffset: 0, endOffset: 0 }
+      return { startOffset: 0, endOffset: 0, file: undefined }
     }
-    return { startOffset: token.startOffset, endOffset: token.endOffset }
+    return { startOffset: token.startOffset, endOffset: token.endOffset, file: token.file }
   }
 
   /** @param {Ast} node */

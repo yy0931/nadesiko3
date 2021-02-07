@@ -138,7 +138,6 @@ class JavaScriptCode {
 
       // start
       if (typeof item.js.start === 'number' && typeof item.nadesiko.start === 'number') {
-        console.log(item.js.start, item.nadesiko.start)
         map.addMapping({
           generated: offsetToLineColumnJS.map(item.js.start, true),
           source: item.file,
@@ -301,7 +300,7 @@ class NakoGen {
 
   /** @returns {JavaScriptCode} */
   static convLineno (node, forceUpdate) {
-    const js = new JavaScriptCode(null)
+    const js = new JavaScriptCode(node)
     if (node.line === undefined) {return js.push('')}
     if (speedMode) return js.push(`/* line=`, node.line, ` */`)
     // 強制的に行番号をアップデートするか
@@ -1072,13 +1071,12 @@ class NakoGen {
       const cvalue = cases[i][0]
       const cblock = this.convGenLoop(cases[i][1])
       if (cvalue.type == '違えば') {
-        body.push(`  default:\n`)
+        body.push(new JavaScriptCode(cvalue).push(`  default:\n`))
       } else {
         const cvalue_code = this._convGen(cvalue)
-        body.push(`  case `, cvalue_code, `:\n`)
+        body.push(new JavaScriptCode(cvalue).push(`  case `, cvalue_code, `:\n`))
       }
-      body.push(`    `, cblock, `\n`,
-                `    break\n`)
+      body.push(new JavaScriptCode(cvalue).push(`    `, cblock, `\n`, `    break\n`))
     }
     const code = new JavaScriptCode(node).push(
       `switch (`, value, `)`, '{\n',

@@ -13,7 +13,7 @@ for (const key in opPriority) {operatorList.push(key)}
 class NakoParser extends NakoParserBase {
   /**
    * @param {TokenWithSourceMap[]} tokens 字句解析済みのトークンの配列
-   * @return {{type: string, block: Ast[], line: number}} AST(構文木)
+   * @return {Ast} AST(構文木)
    */
   parse (tokens) {
     this.reset()
@@ -36,7 +36,7 @@ class NakoParser extends NakoParserBase {
   ySentenceList () {
     const blocks = []
     let line = -1
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     while (!this.isEOF()) {
       const n = this.ySentence()
       if (!n) {break}
@@ -52,7 +52,7 @@ class NakoParser extends NakoParserBase {
   }
 
   ySentence () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     // 最初の語句が決まっている構文
     if (this.check('eol')) {return this.get()}
     if (this.check('embed_code')) {return this.get()}
@@ -93,7 +93,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yBlock () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const blocks = []
     let line = -1
     if (this.check('ここから')) {this.get()}
@@ -133,7 +133,7 @@ class NakoParser extends NakoParserBase {
     if (!this.check(type)) {
       return null
     }
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const def = this.get() // ●
     let defArgs = []
     if (this.check('('))
@@ -190,7 +190,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yIFCond () { // もしの条件の取得
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     let a = this.yGetArg()
     if (!a) {return null}
     // console.log('yIFCond=', a, this.peek())
@@ -240,7 +240,7 @@ class NakoParser extends NakoParserBase {
 
   yIF () {
     if (!this.check('もし')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const mosi = this.get() // skip もし
     let cond = null
     try {
@@ -302,7 +302,7 @@ class NakoParser extends NakoParserBase {
 
   yPromise () {
     if (!this.check('逐次実行')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const tikuji = this.get() // skip 逐次実行
     const blocks = []
     if (!this.check('eol')) {
@@ -405,7 +405,7 @@ class NakoParser extends NakoParserBase {
     const polish = this.infixToPolish(list)
     const stack = []
     for (const t of polish) {
-      const offset = this.peekOffset()
+      const offset = this.peekSourceMap()
       if (!opPriority[t.type]) { // 演算子ではない
         stack.push(t)
         continue
@@ -463,7 +463,7 @@ class NakoParser extends NakoParserBase {
 
   yRepeatTime () {
     if (!this.check('回')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const kai = this.get()
     let num = this.popStack([])
     let multiline = false
@@ -494,7 +494,7 @@ class NakoParser extends NakoParserBase {
 
   yWhile () {
     if (!this.check('間')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const aida = this.get()
     const cond = this.popStack([])
     if (cond === null) {
@@ -518,7 +518,7 @@ class NakoParser extends NakoParserBase {
 
   yFor () {
     if (!this.check('繰り返す')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const kurikaesu = this.get()
     const vTo = this.popStack(['まで'])
     const vFrom = this.popStack(['から'])
@@ -557,7 +557,7 @@ class NakoParser extends NakoParserBase {
 
   yReturn () {
     if (!this.check('戻る')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const modoru = this.get()
     const v = this.popStack(['で', 'を'])
     return {
@@ -571,7 +571,7 @@ class NakoParser extends NakoParserBase {
 
   yForEach () {
     if (!this.check('反復')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const hanpuku = this.get()
     const target = this.popStack(['を'])
     const name = this.popStack(['で'])
@@ -602,7 +602,7 @@ class NakoParser extends NakoParserBase {
 
   ySwitch () {
     if (!this.check('条件分岐')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const joukenbunki = this.get()
     const eol = this.get()
     const value = this.popStack(['で'])
@@ -680,7 +680,7 @@ class NakoParser extends NakoParserBase {
 
   yMumeiFunc () { // 無名関数の定義
     if (!this.check('def_func')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const def = this.get()
     let args = []
     // 関数の引数定義は省略できる
@@ -706,7 +706,7 @@ class NakoParser extends NakoParserBase {
   yCall () {
     if (this.isEOF()) {return null}
     while (!this.isEOF()) {
-      const offset = this.peekOffset()
+      const offset = this.peekSourceMap()
 
       // 代入
       if (this.check('代入')) {
@@ -791,7 +791,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yCallFunc () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const t = this.get()
     const f = t.meta
     // (関数)には ... 構文 ... https://github.com/kujirahand/nadesiko3/issues/66
@@ -859,7 +859,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yLet () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     // 関数への代入的呼び出しの場合
     if (this.check2(['func', 'eq'])) {
       const word = this.peek()
@@ -1045,7 +1045,7 @@ class NakoParser extends NakoParserBase {
 
   yCalc () {
     if (this.check('eol')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     // 値を一つ読む
     const t = this.yGetArg()
     if (!t) {return null}
@@ -1091,7 +1091,7 @@ class NakoParser extends NakoParserBase {
     // プリミティブな値
     if (this.checkTypes(['number', 'string']))
       {return this.get()}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
 
     // 丸括弧
     if (this.check('(')) {return this.yValueKakko()}
@@ -1167,7 +1167,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yValueWord () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     if (this.check('word')) {
       const word = this.get()
       if (this.skipRefArray) {return word}
@@ -1241,7 +1241,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yJSONObject () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     if (this.accept(['{', '}']))
       {return {
         type: 'json_obj',
@@ -1281,7 +1281,7 @@ class NakoParser extends NakoParserBase {
   }
 
   yJSONArray () {
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     if (this.accept(['[', ']']))
       {return {
         type: 'json_array',
@@ -1305,7 +1305,7 @@ class NakoParser extends NakoParserBase {
 
   yTryExcept () {
     if (!this.check('エラー監視')) {return null}
-    const offset = this.peekOffset()
+    const offset = this.peekSourceMap()
     const kansi = this.get() // skip エラー監視
     const block = this.yBlock()
     if (!this.check2(['エラー', 'ならば']))
