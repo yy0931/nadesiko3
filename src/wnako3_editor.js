@@ -65,6 +65,7 @@ function getScope(token) {
         case "エラー監視":
         case "エラー":
         case "変数":
+        case "エラーチェックを無効化":
             return 'keyword.control'
         case "定める":
         case "定数":

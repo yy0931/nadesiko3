@@ -34,6 +34,7 @@ module.exports = {
     {name: 'もし', pattern: /^もしも?/},
     // ならば ← 助詞として定義
     {name: '違えば', pattern: /^違(えば)?/},
+    {name: 'エラーチェックを無効化', pattern: /^エラーチェックを無効化(して)?/},
     // 「回」「間」「繰返」「反復」「抜」「続」「戻」「代入」「条件分岐」などは replaceWord で word から変換
     // @see nako_reserved_words.js
     {name: 'shift_r0', pattern: /^>>>/},

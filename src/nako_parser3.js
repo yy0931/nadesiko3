@@ -51,6 +51,7 @@ class NakoParser extends NakoParserBase {
     if (this.check('eol')) {return this.get()}
     if (this.check('embed_code')) {return this.get()}
     if (this.check('もし')) {return this.yIF()}
+    if (this.check('エラーチェックを無効化')) {return this.yUnchecked()}
     if (this.check('エラー監視')) {return this.yTryExcept()}
     if (this.check('逐次実行')) {return this.yPromise()}
     if (this.accept(['抜ける'])) {return {type: 'break', line: this.y[0].line, josi: ''}}
@@ -281,6 +282,34 @@ class NakoParser extends NakoParserBase {
       false_block: falseBlock,
       josi: '',
       line: mosi.line
+    }
+  }
+
+  yUnchecked () {
+    if (!this.check('エラーチェックを無効化')) {return null}
+    const unchecked = this.get()
+
+    let multiline = false
+    if (this.check('ここから')) {
+      this.get()
+      multiline = true
+    } else if (this.check('eol')) {
+      multiline = true
+    }
+
+    let block = null
+    if (multiline) {
+      block = this.yBlock()
+      if (this.check('ここまで')) {this.get()}
+    } else {
+      block = this.ySentence()
+    }
+
+    return {
+      type: 'unchecked',
+      block,
+      line: unchecked.line,
+      josi: ''
     }
   }
 
