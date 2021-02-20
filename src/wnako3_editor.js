@@ -200,17 +200,16 @@ function escapeHTML(t) {
  * @returns {string | null}
  */
 function getDocumentationHTML(token, nako3) {
-    if (token.type !== 'func') {
-        return null
+    const meta = (text) => `<span class="tooltip-plugin-name">${escapeHTML(text)}</span>`
+    if (token.type === 'func') {
+        return escapeHTML(createParameterDeclaration(token.meta.josi) + token.value) + meta(findPluginName(token.value + '', nako3))
+    } else if (token.type === 'word') {
+        const pluginName = findPluginName(token.value + '', nako3)
+        if (pluginName !== null) {
+            return escapeHTML(token.value + '') + meta(pluginName)
+        }
     }
-    // 助詞を表示する。
-    let text = escapeHTML(createParameterDeclaration(token.meta.josi) + token.value)
-    const plugin = findPluginName(token.value + '', nako3)
-    if (plugin !== null) {
-        // 定義元のプラグインが分かる場合はそれも表示する。
-        text += `<span class="tooltip-plugin-name">${escapeHTML(plugin)}</span>`
-    }
-    return text
+    return null
 }
 
 /**
