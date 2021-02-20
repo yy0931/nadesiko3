@@ -227,7 +227,7 @@ class CNako3 extends NakoCompiler {
     const tasks = super.loadDependencies(code, filename, preCode, {
       resolvePath: (name) => {
         if (/\.js(\.txt)?$/.test(name) || /^[^\.]*$/.test(name)) {
-          return { filePath: path.resolve(this.findPluginFile(name, path.dirname(this.filename))), type: 'js' }
+          return { filePath: path.resolve(this.findPluginFile(name)), type: 'js' }
         }
         if (/\.nako3?(\.txt)?$/.test(name)) {
           return { filePath: path.resolve(name), type: 'nako3' }
