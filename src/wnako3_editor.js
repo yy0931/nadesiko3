@@ -597,7 +597,7 @@ class BackgroundTokenizer {
                 } else {
                     try {
                         const lines = tokenize(this.doc.getAllLines(), this.nako3)
-                        this.cache = { code, lines: JSON.stringify(lines) }
+                        this.cache = { code, lines: JSON.stringify(lines.editorTokens) }
                         ok = true
                     } catch (e) {
                         if (!(e instanceof NakoIndentError || e instanceof LexError)) {
@@ -798,7 +798,7 @@ class LanguageFeatures {
 
         /**
          * metaは候補の横に薄く表示されるテキスト
-         * @type {{ caption: string, value: string, meta: string, docHTML?: string, score: number }[]}
+         * @type {{ caption: string, value: string, meta: string, score: number }[]}
          */
         const result = []
         // プラグイン関数
