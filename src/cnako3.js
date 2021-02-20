@@ -228,12 +228,16 @@ class CNako3 extends NakoCompiler {
     const log = []
     // 同期的に読み込む
     const tasks = super.loadDependencies(code, filename, preCode, {
-      resolvePath: (name) => {
+      resolvePath: (name, token) => {
         if (/\.js(\.txt)?$/.test(name) || /^[^\.]*$/.test(name)) {
           return { filePath: path.resolve(CNako3.findPluginFile(name, this.filename, __dirname, log)), type: 'js' }
         }
         if (/\.nako3?(\.txt)?$/.test(name)) {
-          return { filePath: path.resolve(name), type: 'nako3' }
+          if (path.isAbsolute(name)) {
+            return { filePath: path.resolve(name), type: 'nako3' }
+          } else {
+            return { filePath: path.join(path.dirname(token.file), name), type: 'nako3' }
+          }
         }
         return { filePath: name, type: 'invalid' }
       },
