@@ -184,6 +184,7 @@ function createParameterDeclaration(josi) {
 }
 
 // https://stackoverflow.com/a/6234804
+/** @param {string} t */
 function escapeHTML(t) {
     return t
         .replace(/&/g, '&amp;')
@@ -200,9 +201,14 @@ function escapeHTML(t) {
  * @returns {string | null}
  */
 function getDocumentationHTML(token, nako3) {
+    /** @param {string} text */
     const meta = (text) => `<span class="tooltip-plugin-name">${escapeHTML(text)}</span>`
     if (token.type === 'func') {
-        return escapeHTML(createParameterDeclaration(token.meta.josi) + token.value) + meta(findPluginName(token.value + '', nako3))
+        const pluginName = findPluginName(token.value + '', nako3)
+        if (pluginName !== null) {
+            return escapeHTML(createParameterDeclaration(token.meta.josi) + token.value) + meta(pluginName)
+        }
+        return escapeHTML(createParameterDeclaration(token.meta.josi) + token.value)
     } else if (token.type === 'word') {
         const pluginName = findPluginName(token.value + '', nako3)
         if (pluginName !== null) {
