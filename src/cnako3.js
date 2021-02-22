@@ -239,6 +239,10 @@ class CNako3 extends NakoCompiler {
           if (path.isAbsolute(name)) {
             return { filePath: path.resolve(name), type: 'nako3' }
           } else {
+            // filename が undefined のとき token.file が undefined になる。
+            if (token.file === undefined) {
+              throw new Error('ファイル名を指定してください。')
+            }
             return { filePath: path.join(path.dirname(token.file), name), type: 'nako3' }
           }
         }
