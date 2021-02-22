@@ -11,10 +11,13 @@ const PluginNode = require('./plugin_node')
 const { NakoImportError } = require('./nako_errors')
 
 class CNako3 extends NakoCompiler {
-  constructor () {
+  /** @param {{ nostd?: boolean }} [opts] */
+  constructor (opts = {}) {
     super()
     this.silent = false
-    this.addPluginFile('PluginNode', path.join(__dirname, 'plugin_node.js'), PluginNode)
+    if (!opts.nostd) {
+      this.addPluginFile('PluginNode', path.join(__dirname, 'plugin_node.js'), PluginNode)
+    }
     this.__varslist[0]['ナデシコ種類'] = 'cnako3'
   }
 
