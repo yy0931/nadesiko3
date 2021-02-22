@@ -256,7 +256,7 @@ class CNako3 extends NakoCompiler {
       },
       readJs: (name, token) => {
         try {
-          return { sync: true, value: require(name) }
+          return { sync: true, value: () => require(name) }
         } catch (err) {
           throw new NakoImportError(`プラグイン ${name} が存在しません。次の場所を検索しました: ${log.join(', ')}`, token.line, token.file)
         }
