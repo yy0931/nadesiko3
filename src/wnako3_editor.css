@@ -97,25 +97,26 @@
 }
 
 /* 「設定を開く」ボタンのスタイル */
-.settings-button {
+.editor-button {
     color: gray;
     /* 画面が狭いと設定メニューを閉じられないため、ボタンを表示しない */
     display: none;
     user-select: none;
     white-space: nowrap;
+    margin-left: 10px;
 }
 @media (min-width: 600px) {
-    .settings-button {
+    .editor-button {
         display: inline-block;
     }
 }
-.settings-button:hover {
+.editor-button:hover {
     color: rgb(90, 90, 255);
 }
-.settings-button:active {
+.editor-button:active {
     color: rgb(24, 24, 192);
 }
-.nako3_editor.readonly .settings-button {
+.nako3_editor.readonly .editor-button {
     display: none; /* readonlyのときは表示しない。 */
 }
 
