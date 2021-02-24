@@ -197,7 +197,8 @@ function getDocumentationHTML(token, nako3) {
         return null
     }
     // 助詞を表示する。
-    let text = escapeHTML(createParameterDeclaration(token.meta.josi) + token.value)
+    const josi = (token.meta && token.meta.josi) ? createParameterDeclaration(token.meta.josi) : ``
+    let text = escapeHTML(josi + token.value)
     const plugin = findPluginName(token.value + '', nako3)
     if (plugin !== null) {
         // 定義元のプラグインが分かる場合はそれも表示する。
