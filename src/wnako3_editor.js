@@ -1256,32 +1256,30 @@ function setupEditor (id, nako3, ace, defaultFileName = 'main.nako3') {
     buttonContainer.appendChild(slowSpeedMessage)
 
     // 「全画面表示」ボタン
+    const exitFullscreen = () => {
+        editor.container.classList.remove('fullscreen')
+        editor.renderer.setScrollMargin(0, 0, 0, 0) // marginを元に戻す
+    }
     const fullscreenButton = document.createElement('span')
     fullscreenButton.classList.add('editor-button')
     fullscreenButton.innerText = '全画面表示'
     fullscreenButton.addEventListener('click', (e) => {
-        if (document.fullscreenElement === editor.container) {
-            document.exitFullscreen().catch(console.error)
+        if (editor.container.classList.contains('fullscreen')) {
+            exitFullscreen()
         } else {
-            editor.container.requestFullscreen()
-            .then(() => { editor.renderer.setScrollMargin(20, 20, 0, 0) }) // 上下に少し隙間を開ける
-            .catch(console.error)
+            editor.container.classList.add('fullscreen')
+            editor.renderer.setScrollMargin(20, 20, 0, 0) // 上下に少し隙間を開ける
         }
         e.preventDefault()
     })
     buttonContainer.appendChild(fullscreenButton)
-    document.addEventListener('fullscreenchange', () => {
-        if (document.fullscreenElement !== editor.container) {
-            editor.renderer.setScrollMargin(0, 0, 0, 0) // marginを元に戻す
-        }
-    })
 
     // 「設定を開く」ボタン
     const settingsButton = document.createElement('span')
     settingsButton.classList.add('editor-button')
     settingsButton.innerText = '設定を開く'
     settingsButton.addEventListener('click', (e) => {
-        document.exitFullscreen().catch(console.error)  // 全画面表示だと設定画面が見えない
+        exitFullscreen()
         editor.execCommand("showSettingsMenu")
         e.preventDefault()
     })
